@@ -6,9 +6,8 @@ import {
     BaseQuery,
     NewProductRequestBody, SearchRequestQuery,
 } from '../types/types.js';
-import { uploadToCloudinary, } from '../utils/features.js';
+import { deleteFromCloudinary, invalidateCache, uploadToCloudinary } from '../utils/features.js';
 import ErrorHandler from '../utils/utility-class.js';
-
 
 export const newProduct = TryCatch(
     async (req: Request<{}, {}, NewProductRequestBody>, res, next) => {
@@ -56,7 +55,7 @@ export const getlatestProducts = TryCatch(async (req, res, next) => {
 
     if (products) {
         products = JSON.parse(products);
-    }else {
+    } else {
         products = await Product.find({}).sort({ createdAt: -1 }).limit(5);
         await redis.setex('latest-products', redisTTL, JSON.stringify(products));
     }
@@ -100,7 +99,7 @@ export const getAllProducts = TryCatch(
                     $lte: Number(price),
                 };
 
-            if (category){
+            if (category) {
                 baseQuery.category = category;
             }
 
@@ -127,3 +126,137 @@ export const getAllProducts = TryCatch(
         });
     }
 );
+
+export const getAllCategories = TryCatch(async (req, res, next) => {
+    let categories;
+
+    categories = await redis.get('categories');
+
+    if (categories) {
+        categories = JSON.parse(categories);
+    } else {
+        categories = await Product.distinct('category');
+        await redis.setex('categories', redisTTL, JSON.stringify(categories));
+    }
+
+    return res.status(200).json({
+        success: true,
+        categories
+    });
+});
+
+export const getAdminProducts = TryCatch(async (req, res, next) => {
+    let products;
+
+    products = await redis.get('all-products');
+
+    if (products) {
+        products = JSON.parse(products);
+    } else {
+        products = await Product.find({});
+        await redis.setex('all-products', redisTTL, JSON.stringify(products));
+    }
+
+    return res.status(200).json({
+        success: true,
+        products
+    });
+});
+
+export const getSingleProduct = TryCatch(async (req, res, next) => {
+    let product;
+    const id = req.params.id;
+    const key = `product-${id}`;
+
+    product = await redis.get(key);
+    if (product) {
+        product = JSON.parse(product);
+    } else {
+        product = await Product.findById(id);
+        if (!product) {
+            return next(new ErrorHandler('Product Not Found', 404));
+        }
+
+        await redis.setex(key, redisTTL, JSON.stringify(product));
+    }
+
+    return res.status(200).json({
+        success: true,
+        product
+    });
+});
+
+export const updateProduct = TryCatch(async (req, res, next) => {
+    const { id } = req.params;
+    const { name, price, stock, category, description } = req.body;
+    const photos = req.files as Express.Multer.File[] | undefined;
+
+    const product = await Product.findById(id);
+
+    if (!product) {
+        return next(new ErrorHandler('Product Not Found', 404));
+    }
+
+    if (photos && photos.length > 0) {
+        const photosURL = await uploadToCloudinary(photos);
+
+        const ids = product.photos.map((photo) => photo.public_id);
+
+        await deleteFromCloudinary(ids);
+
+        product.photos = photosURL;
+    }
+
+    if (name) {
+        product.name = name;
+    }
+    if (price) {
+        product.price = price;
+    }
+    if (stock) {
+        product.stock = stock;
+    }
+    if (category) {
+        product.category = category;
+    }
+    if (description) {
+        product.description = description;
+    }
+
+    await product.save();
+
+    await invalidateCache({
+        product: true,
+        productId: String(product._id),
+        admin: true
+    });
+
+    return res.status(200).json({
+        success: true,
+        message: 'Product Updated Successfully',
+    });
+});
+
+export const deleteProduct = TryCatch(async (req, res, next) => {
+    const product = await Product.findById(req.params.id);
+    if (!product) {
+        return next(new ErrorHandler('Product Not Found', 404));
+    }
+
+    const ids = product.photos.map((photo) => photo.public_id);
+
+    await deleteFromCloudinary(ids);
+
+    await product.deleteOne();
+
+    await invalidateCache({
+        product: true,
+        productId: String(product._id),
+        admin: true
+    });
+
+    return res.status(200).json({
+        success: true,
+        message: 'Product Deleted Successfully'
+    });
+});
