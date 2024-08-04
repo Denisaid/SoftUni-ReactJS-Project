@@ -1,5 +1,5 @@
 import express from 'express';
-import { allCoupons, applyDiscount, getCoupon, newCoupon } from '../controllers/payment.js';
+import { allCoupons, applyDiscount, deleteCoupon, getCoupon, newCoupon, updateCoupon } from '../controllers/payment.js';
 import { adminOnly } from '../middlewares/auth.js';
 
 const app = express.Router();
@@ -7,6 +7,10 @@ const app = express.Router();
 app.post('/coupon/new', adminOnly, newCoupon);
 app.get('/discount', applyDiscount);
 app.get('/coupon/all', adminOnly, allCoupons);
-app.get('/coupon/:id', getCoupon);
+app
+    .route('/coupon/:id')
+    .get(adminOnly, getCoupon)
+    .put(adminOnly, updateCoupon)
+    .delete(adminOnly, deleteCoupon);
 
 export default app;
